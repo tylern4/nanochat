@@ -222,6 +222,67 @@ class DummyWandb:
     def finish(self):
         pass
 
+
+class ClearMLWandb:
+    """ClearML-backed drop-in replacement for the wandb run object.
+
+    Activated by setting the CLEARML_RUN environment variable (master process
+    only). Task.init attaches to the task referenced by CLEARML_TASK_ID when
+    present (e.g. when running under scripts/clearml_stage.py or under a
+    clearml-agent), otherwise it creates a new task in $CLEARML_PROJECT
+    (default "nanochat").
+    """
+
+    def __init__(self, run_name=None, config=None):
+        from clearml import Task
+
+        project = os.environ.get("CLEARML_PROJECT", "nanochat")
+        name = f"{run_name}" if run_name else "nanochat"
+        self.task = Task.init(
+            project_name=project,
+            task_name=name,
+            task_type=Task.TaskTypes.training,
+            auto_connect_frameworks=False,
+            reuse_last_task_id=False,
+        )
+        if config is not None:
+            cfg = config if isinstance(config, dict) else vars(config)
+            self.task.connect(cfg, name="config")
+        self._logger = self.task.get_logger()
+
+    def log(self, payloads, step=None, **kwargs):
+        iteration = int(step) if step is not None else 0
+
+        def emit(prefix, obj):
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    emit(f"{prefix}/{key}" if prefix else str(key), value)
+            elif isinstance(obj, bool):
+                self._logger.report_scalar("nanochat", prefix, float(obj), iteration)
+            elif isinstance(obj, (int, float)):
+                self._logger.report_scalar("nanochat", prefix, float(obj), iteration)
+
+        for key, value in (payloads or {}).items():
+            emit(str(key), value)
+
+    def finish(self):
+        # do not close the task: when attaching to a pipeline task owned by
+        # clearml_stage.py the wrapper still needs to upload artifacts after
+        # the training process exits. The agent/atexit marks completion.
+        self.task.flush()
+
+
+def get_run_logger(run_name=None, config=None):
+    """Return the run logger for the active logging backend.
+
+    Returns ClearMLWandb when CLEARML_RUN is set in the environment, else None
+    (the caller should fall back to its default wandb/DummyWandb handling).
+    """
+    if os.environ.get("CLEARML_RUN"):
+        return ClearMLWandb(run_name=run_name, config=config)
+    return None
+
+
 # hardcoded BF16 peak flops for various GPUs
 # inspired by torchtitan: https://github.com/pytorch/torchtitan/blob/main/torchtitan/tools/utils.py
 # and PR: https://github.com/karpathy/nanochat/pull/147
