@@ -103,6 +103,7 @@ def main() -> None:
     # running remotely (or locally after the handoff): do the work
     # ------------------------------------------------------------------
     base_dir = os.environ.get("NANOCHAT_BASE_DIR", "/tmp/nanochat")
+    os.environ["NANOCHAT_BASE_DIR"] = base_dir  # inner scripts must agree
     os.makedirs(base_dir, exist_ok=True)
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ["CLEARML_RUN"] = "1"  # inner nanochat scripts log via ClearML shim
@@ -136,8 +137,9 @@ def main() -> None:
         sh([sys.executable, "-m", "nanochat.dataset", "-n", "8"], os.environ)
         sh([sys.executable, "-m", "scripts.tok_train"], os.environ)
         sh([sys.executable, "-m", "scripts.tok_eval"], os.environ)
+        from pathlib import Path
         tokenizer_dir = os.path.join(base_dir, "tokenizer")
-        task.upload_artifact("tokenizer", tokenizer_dir, wait_on_upload=True)
+        task.upload_artifact("tokenizer", Path(tokenizer_dir), wait_on_upload=True)
 
     elif stage == "base":
         if params["upstream_tok"]:
@@ -152,8 +154,9 @@ def main() -> None:
         if params["num_iterations"] and params["num_iterations"] > 0:
             extra.append(f"--num-iterations={params['num_iterations']}")
         sh(torchrun("scripts.base_train", extra), os.environ)
+        from pathlib import Path
         checkpoint_dir = os.path.join(base_dir, "base_checkpoints", f"d{params['depth']}")
-        task.upload_artifact("base-checkpoint", checkpoint_dir, wait_on_upload=True)
+        task.upload_artifact("base-checkpoint", Path(checkpoint_dir), wait_on_upload=True)
 
     elif stage == "sft":
         if params["upstream_tok"]:
@@ -163,8 +166,9 @@ def main() -> None:
                               os.path.join(base_dir, "base_checkpoints", f"d{params['depth']}"))
         # chat_sft auto-guesses the base checkpoint tag/step and inherits hyperparams
         sh(torchrun("scripts.chat_sft", []), os.environ)
+        from pathlib import Path
         checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", f"d{params['depth']}")
-        task.upload_artifact("sft-checkpoint", checkpoint_dir, wait_on_upload=True)
+        task.upload_artifact("sft-checkpoint", Path(checkpoint_dir), wait_on_upload=True)
 
     elif stage == "chat_eval":
         if params["upstream_tok"]:
