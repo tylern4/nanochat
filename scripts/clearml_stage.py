@@ -44,8 +44,10 @@ def sh(cmd: list, env: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="nanochat ClearML stage")
-    parser.add_argument("--stage", choices=STAGES, required=True)
-    parser.add_argument("--register", action="store_true", help="register task only, do not run")
+    # NOTE: all args optional - when run remotely the agent re-executes this
+    # script with no argv; the actual values come from the connected params.
+    parser.add_argument("--stage", choices=STAGES, default=None)
+    parser.add_argument("--register", action="store_true")
     parser.add_argument("--upstream-tok", type=str, default="")
     parser.add_argument("--upstream-base", type=str, default="")
     parser.add_argument("--upstream-sft", type=str, default="")
@@ -54,7 +56,7 @@ def main() -> None:
     parser.add_argument("--device-batch-size", type=int, default=8)
     parser.add_argument("--num-shards", type=int, default=48, help="pretraining shards to download")
     parser.add_argument("--max-seq-len", type=int, default=2048)
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     from clearml import Task
 
@@ -93,6 +95,10 @@ def main() -> None:
 
     task.execute_remotely(queue_name=os.environ.get("CLEARML_QUEUE", "muller"))
 
+    stage = params["stage"]
+    if stage not in STAGES:
+        raise RuntimeError(f"missing/invalid stage parameter: {stage!r}")
+
     # ------------------------------------------------------------------
     # running remotely (or locally after the handoff): do the work
     # ------------------------------------------------------------------
@@ -106,7 +112,6 @@ def main() -> None:
 
     if torch.cuda.is_available():
         nproc = min(nproc, torch.cuda.device_count())
-    stage = params["stage"]
 
     def download_artifact(upstream_id: str, name: str, dest: str) -> None:
         """Fetch a folder artifact from an upstream task and place it at dest."""
