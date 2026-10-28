@@ -251,6 +251,11 @@ class ClearMLWandb:
         self._logger = self.task.get_logger()
 
     def log(self, payloads, step=None, **kwargs):
+        # wandb callers in nanochat pass the step inside the payload dict
+        # (wandb_run.log({... "step": step})) rather than as a kwarg, so
+        # derive the x-axis from there when not given explicitly.
+        if step is None:
+            step = (payloads or {}).get("step")
         iteration = int(step) if step is not None else 0
 
         def emit(prefix, obj):
@@ -258,9 +263,14 @@ class ClearMLWandb:
                 for key, value in obj.items():
                     emit(f"{prefix}/{key}" if prefix else str(key), value)
             elif isinstance(obj, bool):
-                self._logger.report_scalar("nanochat", prefix, float(obj), iteration)
+                self._logger.report_scalar(title=prefix, series=prefix, value=float(obj), iteration=iteration)
             elif isinstance(obj, (int, float)):
-                self._logger.report_scalar("nanochat", prefix, float(obj), iteration)
+                # keys like "train/loss" become title="train", series="loss"
+                title, _, series = prefix.rpartition("/")
+                self._logger.report_scalar(
+                    title=title or "metrics", series=series or prefix,
+                    value=float(obj), iteration=iteration,
+                )
 
         for key, value in (payloads or {}).items():
             emit(str(key), value)
