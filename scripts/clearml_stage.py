@@ -87,6 +87,9 @@ def main() -> None:
     output_uri = os.environ.get("WF_OUTPUT_URI")
     if output_uri:
         task.output_uri = output_uri
+        # debug samples default to the files server; keep them on the task's
+        # output storage (e.g. S3) as well
+        task.get_logger().set_default_upload_destination(output_uri)
 
     if args.register:
         print(f"register stage task: id={task.id}")
