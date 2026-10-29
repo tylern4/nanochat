@@ -177,8 +177,49 @@ def main() -> None:
             download_artifact(params["upstream_sft"], "sft-checkpoint",
                               os.path.join(base_dir, "chatsft_checkpoints", f"d{params['depth']}"))
         sh(torchrun("scripts.chat_eval", ["-i", "sft"]), os.environ)
-        # sample a chat response so the console shows model behavior
-        sh([sys.executable, "-m", "scripts.chat_cli", "-p", "Why is the sky blue?"], os.environ)
+
+        # generate a few chat samples: Plots table + debug text samples
+        import io
+
+        import torch
+        from nanochat.checkpoint_manager import load_model
+        from nanochat.engine import Engine
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model, tokenizer, meta = load_model("sft", device, phase="eval")
+        engine = Engine(model, tokenizer)
+        bos = tokenizer.get_bos_token_id()
+        user_start, user_end = tokenizer.encode_special("<|user_start|>"), tokenizer.encode_special("<|user_end|>")
+        assistant_start, assistant_end = tokenizer.encode_special("<|assistant_start|>"), tokenizer.encode_special("<|assistant_end|>")
+
+        prompts = [
+            "Why is the sky blue?",
+            "What is the capital of France?",
+            "If 5*x + 3 = 13, then x is",
+            "Tell me a one-paragraph story about a robot.",
+        ]
+        rows = [["prompt", "response"]]
+        logger = task.get_logger()
+        for i, prompt in enumerate(prompts):
+            conversation = [bos, user_start]
+            conversation.extend(tokenizer.encode(prompt))
+            conversation.extend([user_end, assistant_start])
+            response_tokens = []
+            for token_column, _masks in engine.generate(
+                conversation, num_samples=1, max_tokens=256, temperature=0.6, top_k=50
+            ):
+                response_tokens.append(token_column[0])
+            if response_tokens[-1] != assistant_end:
+                response_tokens.append(assistant_end)
+            response = tokenizer.decode(response_tokens)
+            rows.append([prompt, response])
+            logger.report_media(
+                title="generations", series=prompt[:40], iteration=i,
+                stream=io.BytesIO(f"prompt: {prompt}\n\nresponse: {response}".encode()),
+                file_extension="txt",
+            )
+        logger.report_table("chat_samples", "sft", iteration=0, table=rows)
+        logger.report_text(f"chat samples generated: {len(prompts)}")
 
     print(f"stage '{stage}' complete")
 

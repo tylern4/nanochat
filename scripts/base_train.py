@@ -474,7 +474,10 @@ while True:
             tokens = tokenizer(prompt, prepend="<|bos|>")
             with disable_fp8(orig_model):
                 sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
-            print0(tokenizer.decode(sample[0]))
+            sample_text = tokenizer.decode(sample[0])
+            print0(sample_text)
+            if hasattr(wandb_run, "report_sample"):  # clearml shim extension
+                wandb_run.report_sample(sample_text, step=step, label=prompt[:40])
         model.train()
 
     # save checkpoint: at the end of the run, or every save_every steps, except at the first step or the resume step

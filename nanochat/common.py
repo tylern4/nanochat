@@ -260,6 +260,15 @@ class ClearMLWandb:
 
         def emit(prefix, obj):
             if isinstance(obj, dict):
+                # benchmark breakdowns (e.g. centered_results) additionally
+                # render as a bar chart in the Plots section
+                if prefix == "centered_results":
+                    labels = list(obj.keys())
+                    self._logger.report_histogram(
+                        title="eval_benchmarks", series=f"step {iteration}",
+                        values=[float(v) for v in obj.values()],
+                        iteration=iteration, labels=labels,
+                    )
                 for key, value in obj.items():
                     emit(f"{prefix}/{key}" if prefix else str(key), value)
             elif isinstance(obj, bool):
@@ -274,6 +283,17 @@ class ClearMLWandb:
 
         for key, value in (payloads or {}).items():
             emit(str(key), value)
+
+    def report_sample(self, text, step=None, label="generation"):
+        """Upload a text generation as a debug sample (ClearML extension)."""
+        from io import BytesIO
+
+        self._logger.report_media(
+            title="samples", series=label,
+            iteration=int(step) if step is not None else 0,
+            stream=BytesIO(str(text).encode("utf-8")),
+            file_extension="txt",
+        )
 
     def finish(self):
         # do not close the task: when attaching to a pipeline task owned by
