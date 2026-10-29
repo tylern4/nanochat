@@ -224,7 +224,7 @@ def main() -> None:
                 stream=io.BytesIO(f"prompt: {prompt}\n\nresponse: {response}".encode()),
                 file_extension="txt",
             )
-        logger.report_table("chat_samples", "sft", iteration=0, table=rows)
+        logger.report_table("chat_samples", "sft", iteration=0, table_plot=rows)
         logger.report_text(f"chat samples generated: {len(prompts)}")
 
     print(f"stage '{stage}' complete")
