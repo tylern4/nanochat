@@ -191,7 +191,7 @@ def main() -> None:
         from nanochat.checkpoint_manager import load_model
         from nanochat.engine import Engine
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model, tokenizer, meta = load_model("sft", device, phase="eval")
         engine = Engine(model, tokenizer)
         bos = tokenizer.get_bos_token_id()
