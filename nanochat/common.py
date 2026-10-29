@@ -249,6 +249,7 @@ class ClearMLWandb:
             cfg = config if isinstance(config, dict) else vars(config)
             self.task.connect(cfg, name="config")
         self._logger = self.task.get_logger()
+        self._history = {}  # key -> [(step, value), ...] for summary plots
 
     def log(self, payloads, step=None, **kwargs):
         # wandb callers in nanochat pass the step inside the payload dict
@@ -258,38 +259,43 @@ class ClearMLWandb:
             step = (payloads or {}).get("step")
         iteration = int(step) if step is not None else 0
 
-        def emit(prefix, obj):
+        flat = {}
+
+        def flatten(prefix, obj):
             if isinstance(obj, dict):
-                # benchmark breakdowns (e.g. centered_results) additionally
-                # render as a table in the Plots section. Best-effort: a
-                # plotting bug must never kill a training run.
-                if prefix == "centered_results":
-                    try:
-                        self._logger.report_table(
-                            title="eval_benchmarks", series=f"step {iteration}",
-                            iteration=iteration,
-                            table=[["benchmark", "centered_score"]]
-                                  + [[k, float(v)] for k, v in obj.items()],
-                        )
-                    except Exception as ex:
-                        print(f"[clearml] warning: failed reporting benchmark plot: {ex}")
                 for key, value in obj.items():
-                    emit(f"{prefix}/{key}" if prefix else str(key), value)
-            elif isinstance(obj, bool):
-                self._logger.report_scalar(title=prefix, series=prefix, value=float(obj), iteration=iteration)
-            elif isinstance(obj, (int, float)):
-                # keys like "train/loss" become title="train", series="loss"
-                title, _, series = prefix.rpartition("/")
-                try:
-                    self._logger.report_scalar(
-                        title=title or "metrics", series=series or prefix,
-                        value=float(obj), iteration=iteration,
-                    )
-                except Exception as ex:
-                    print(f"[clearml] warning: failed reporting scalar {prefix}: {ex}")
+                    flatten(f"{prefix}/{key}" if prefix else str(key), value)
+            elif isinstance(obj, (bool, int, float)):
+                flat[prefix] = float(obj)
 
         for key, value in (payloads or {}).items():
-            emit(str(key), value)
+            flatten(str(key), value)
+
+        for key, value in flat.items():
+            title, _, series = key.rpartition("/")
+            self._history.setdefault(key, []).append((iteration, value))
+            try:
+                self._logger.report_scalar(
+                    title=title or "metrics", series=series or key,
+                    value=value, iteration=iteration,
+                )
+            except Exception as ex:
+                print(f"[clearml] warning: failed reporting scalar {key}: {ex}")
+
+        # benchmark breakdowns (e.g. centered_results) additionally render
+        # as a table in the Plots section. Best-effort: a plotting bug must
+        # never kill a training run.
+        breakdown = (payloads or {}).get("centered_results")
+        if isinstance(breakdown, dict):
+            try:
+                self._logger.report_table(
+                    title="eval_benchmarks", series=f"step {iteration}",
+                    iteration=iteration,
+                    table=[["benchmark", "centered_score"]]
+                          + [[k, float(v)] for k, v in breakdown.items()],
+                )
+            except Exception as ex:
+                print(f"[clearml] warning: failed reporting benchmark plot: {ex}")
 
     def report_sample(self, text, step=None, label="generation"):
         """Upload a text generation as a debug sample (ClearML extension)."""
@@ -303,10 +309,56 @@ class ClearMLWandb:
         )
 
     def finish(self):
+        self._report_summary_plots()
         # do not close the task: when attaching to a pipeline task owned by
         # clearml_stage.py the wrapper still needs to upload artifacts after
         # the training process exits. The agent/atexit marks completion.
         self.task.flush()
+
+    def _report_summary_plots(self):
+        """Render one multi-panel summary figure into the Plots section."""
+        if not self._history:
+            return
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+
+            def series(key):
+                pts = self._history.get(key) or []
+                return [p[0] for p in pts], [p[1] for p in pts]
+
+            panels = [
+                [("train/loss", "train loss (EMA)", None)],
+                [("val/bpb", "val bpb", None), ("core_metric", "CORE metric", None)],
+                [("train/mfu", "MFU %", None), ("train/tok_per_sec", "tok/sec", "tw")],
+                [("train/lrm", "lr multiplier", None), ("train/eta_min", "eta (min)", "tw")],
+            ]
+            fig, axes = plt.subplots(2, 2, figsize=(11, 7))
+            fig.suptitle("nanochat training summary")
+            for ax, panel in zip(axes.flat, panels):
+                for key, label, mode in panel:
+                    xs, ys = series(key)
+                    if not xs:
+                        continue
+                    if mode == "tw":
+                        ax2 = ax.twinx()
+                        ax2.plot(xs, ys, color="tab:orange", alpha=0.85, label=label)
+                        ax2.set_ylabel(label, color="tab:orange")
+                    else:
+                        ax.plot(xs, ys, label=label)
+                if ax.get_lines():
+                    ax.legend(loc="best", fontsize=8)
+                ax.set_xlabel("step")
+            last_step = max((pts[-1][0] for pts in self._history.values() if pts), default=0)
+            self._logger.report_matplotlib_figure(
+                title="training_summary", series="curves", figure=fig,
+                iteration=last_step,
+            )
+            plt.close(fig)
+        except Exception as ex:
+            print(f"[clearml] warning: failed reporting summary plots: {ex}")
 
 
 def get_run_logger(run_name=None, config=None):

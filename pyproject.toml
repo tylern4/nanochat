@@ -61,6 +61,7 @@ gpu = [
 clearml = [
     "clearml>=2.1",
     "boto3>=1.28",
+    "matplotlib>=3.8",
 ]
 
 [tool.uv]
