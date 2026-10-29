@@ -261,14 +261,18 @@ class ClearMLWandb:
         def emit(prefix, obj):
             if isinstance(obj, dict):
                 # benchmark breakdowns (e.g. centered_results) additionally
-                # render as a bar chart in the Plots section
+                # render as a table in the Plots section. Best-effort: a
+                # plotting bug must never kill a training run.
                 if prefix == "centered_results":
-                    labels = list(obj.keys())
-                    self._logger.report_histogram(
-                        title="eval_benchmarks", series=f"step {iteration}",
-                        values=[float(v) for v in obj.values()],
-                        iteration=iteration, labels=labels,
-                    )
+                    try:
+                        self._logger.report_table(
+                            title="eval_benchmarks", series=f"step {iteration}",
+                            iteration=iteration,
+                            table=[["benchmark", "centered_score"]]
+                                  + [[k, float(v)] for k, v in obj.items()],
+                        )
+                    except Exception as ex:
+                        print(f"[clearml] warning: failed reporting benchmark plot: {ex}")
                 for key, value in obj.items():
                     emit(f"{prefix}/{key}" if prefix else str(key), value)
             elif isinstance(obj, bool):
@@ -276,10 +280,13 @@ class ClearMLWandb:
             elif isinstance(obj, (int, float)):
                 # keys like "train/loss" become title="train", series="loss"
                 title, _, series = prefix.rpartition("/")
-                self._logger.report_scalar(
-                    title=title or "metrics", series=series or prefix,
-                    value=float(obj), iteration=iteration,
-                )
+                try:
+                    self._logger.report_scalar(
+                        title=title or "metrics", series=series or prefix,
+                        value=float(obj), iteration=iteration,
+                    )
+                except Exception as ex:
+                    print(f"[clearml] warning: failed reporting scalar {prefix}: {ex}")
 
         for key, value in (payloads or {}).items():
             emit(str(key), value)
