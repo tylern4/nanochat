@@ -8,6 +8,7 @@ Example tasks: MMLU, ARC-Easy, ARC-Challenge, GSM8K, HumanEval, SmolTalk.
 import os
 import json
 import random
+import time
 import urllib.request
 
 import numpy as np
@@ -42,6 +43,20 @@ class HubDataset:
         return row
 
 
+def _urlopen_with_retry(url, attempts=4, backoff_sec=15):
+    """Open a URL, retrying transient HTTP failures (e.g. HF CDN hiccups)."""
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return urllib.request.urlopen(url, timeout=120)
+        except Exception as e:
+            last_exc = e
+            wait = backoff_sec * (2 ** (attempt - 1))
+            print(f"download of {url} failed ({e}); retry {attempt}/{attempts} in {wait}s")
+            time.sleep(wait)
+    raise last_exc
+
+
 def load_hub_dataset(repo_id, subset="default", split="train"):
     """
     Minimal stand-in for HuggingFace datasets.load_dataset(repo_id, subset, split=split).
@@ -61,13 +76,13 @@ def load_hub_dataset(repo_id, subset="default", split="train"):
             # here and then skip the download because they recheck the manifest
             if not os.path.exists(manifest_path):
                 listing_url = f"https://huggingface.co/api/datasets/{repo_id}/parquet/{subset}/{split}"
-                with urllib.request.urlopen(listing_url) as response:
+                with _urlopen_with_retry(listing_url) as response:
                     shard_urls = json.loads(response.read())
                 filenames = []
                 for shard_index, shard_url in enumerate(shard_urls):
                     filename = f"{shard_index:05d}.parquet"
                     print(f"Downloading {shard_url} ...")
-                    with urllib.request.urlopen(shard_url) as response:
+                    with _urlopen_with_retry(shard_url) as response:
                         content = response.read()
                     with open(os.path.join(shards_dir, filename), "wb") as f:
                         f.write(content)
