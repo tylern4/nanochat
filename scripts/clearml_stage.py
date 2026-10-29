@@ -103,11 +103,11 @@ def main() -> None:
     # running remotely (or locally after the handoff): do the work
     # ------------------------------------------------------------------
     base_dir = os.environ.get("NANOCHAT_BASE_DIR") or (
-        # prefer real scratch over /tmp (tmpfs/RAM on the node); SCRATCH is
-        # set on the host but may not propagate into the container, where
-        # /mscratch is always mounted read-write
+        # prefer real scratch over /tmp (tmpfs/RAM on the node). SCRATCH is
+        # set on NERSC batch hosts but may not propagate into the container;
+        # fall back to /tmp so the wrapper stays portable across machines.
         os.path.join(os.environ["SCRATCH"], "nanochat")
-        if os.environ.get("SCRATCH") else "/mscratch/sd/dasml/nanochat"
+        if os.environ.get("SCRATCH") else "/tmp/nanochat"
     )
     os.environ["NANOCHAT_BASE_DIR"] = base_dir  # inner scripts must agree
     os.makedirs(base_dir, exist_ok=True)
